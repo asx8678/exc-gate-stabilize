@@ -6,12 +6,15 @@ defmodule CodePuppyControl.TUI.RendererTest do
   alias CodePuppyControl.Stream.Event
   alias CodePuppyControl.TUI.Renderer
 
-  # ── No-op output adapter for spinner-idempotency smoke tests ──────────
+  # ── No-op output adapter for spinner-idempotency & state-only tests ─────
   #
   # Returns valid spinner refs without starting real Owl spinners.
   # The Renderer's own query API (spinners_idle?, spinner_active?) is
   # sufficient for smoke-testing idempotency. For full spy coverage that
   # counts start_spinner/stop_spinner calls, see RendererDuplicateStartTest.
+  #
+  # Discards all output. For a test adapter that preserves IO output
+  # (compatible with capture_io), see CaptureOutput below.
 
   defmodule NoOpOutput do
     @moduledoc false
@@ -51,10 +54,77 @@ defmodule CodePuppyControl.TUI.RendererTest do
     def color_background(_), do: :blue_background
   end
 
+  # ── Capture output adapter for IO-assertion tests ─────────────────────
+  #
+  # Delegates rendering (puts, banner, tool_banner) to OwlOutput so that
+  # output is captured by ExUnit.CaptureIO, but uses make_ref() for spinner
+  # refs instead of starting real Owl.Spinner processes.
+  #
+  # ROOT CAUSE (code-puppy-268): Owl.Spinner.stop/1 calls
+  # Owl.LiveScreen.await_render/1, which does an unbounded `receive` for a
+  # `:rendered` message.  When Owl.LiveScreen is not running (it returns
+  # `:ignore` from init when there's no terminal, e.g. in CI), the cast is
+  # silently dropped and await_render blocks forever.  The GenServer.call
+  # inside Owl.Spinner.stop eventually times out (default 5000ms), but that
+  # blocks the Renderer GenServer for the entire duration, causing cascading
+  # GenServer.call timeouts on finalize/reset.
+  #
+  # By avoiding real Owl.Spinner processes entirely, this adapter eliminates
+  # the dependency on Owl.LiveScreen availability and makes tests
+  # deterministic regardless of terminal presence.
+
+  defmodule CaptureOutput do
+    @moduledoc false
+    @behaviour CodePuppyControl.TUI.Output
+
+    alias CodePuppyControl.TUI.Renderer.OwlOutput
+
+    # ── Rendering: delegate to OwlOutput (writes to :stdio, captured by capture_io) ──
+
+    @impl true
+    def puts(data), do: OwlOutput.puts(data)
+
+    @impl true
+    def banner(label, color, icon), do: OwlOutput.banner(label, color, icon)
+
+    @impl true
+    def tool_banner(tool_name), do: OwlOutput.tool_banner(tool_name)
+
+    # ── Spinners: synthetic refs, no real Owl.Spinner processes ──────────
+
+    @impl true
+    def start_spinner(loading_index, _idx) do
+      ref = make_ref()
+      {ref, loading_index + 1}
+    end
+
+    @impl true
+    def stop_spinner(_ref), do: :ok
+
+    @impl true
+    def stop_tool_spinner(spinner_ids, idx) do
+      case Map.get(spinner_ids, idx) do
+        nil -> spinner_ids
+        _ref -> Map.delete(spinner_ids, idx)
+      end
+    end
+
+    @impl true
+    def stop_all_spinners(_spinner_ids), do: %{}
+
+    @impl true
+    def color_background(:cyan), do: :cyan_background
+    def color_background(_), do: :blue_background
+  end
+
   # ── Helpers ────────────────────────────────────────────────────────────────
 
   # Starts a renderer without PubSub subscriptions (no session/run id).
   # We push events directly via Renderer.push/2.
+  #
+  # Defaults to NoOpOutput to avoid real Owl.Spinner processes, which depend
+  # on Owl.LiveScreen and cause GenServer.call timeout flakes when no
+  # terminal is available (see CaptureOutput docs / code-puppy-268).
   defp start_renderer(opts \\ []) do
     # Use a unique name so parallel tests don't clash
     name =
@@ -62,6 +132,7 @@ defmodule CodePuppyControl.TUI.RendererTest do
         :"renderer_test_#{System.unique_integer([:positive])}"
       end)
 
+    opts = Keyword.put_new(opts, :output_mod, NoOpOutput)
     {:ok, pid} = Renderer.start_link(opts ++ [name: name])
     {pid, name}
   end
@@ -70,12 +141,21 @@ defmodule CodePuppyControl.TUI.RendererTest do
   # captured stdout.  Starting the GenServer *inside* capture_io
   # ensures its group leader is the captured device, so all
   # Owl.IO.puts output is captured.
+  #
+  # Always uses CaptureOutput, which delegates rendering to OwlOutput
+  # (output captured by capture_io) but avoids real Owl.Spinner processes
+  # that depend on Owl.LiveScreen (see code-puppy-268).
   defp capture_renderer(opts \\ [], fun) do
+    # Force CaptureOutput — callers must not override this, as the
+    # assertions depend on IO output being captured.
+    opts = Keyword.put(opts, :output_mod, CaptureOutput)
+
     capture_io(fn ->
       {pid, name} = start_renderer(opts)
       fun.(name)
-      # Small sleep ensures elapsed > 0 for the completion stats line
-      # and lets Owl.Spinner teardown settle before we un-capture.
+      # Small sleep ensures elapsed > 0 for the completion stats line.
+      # (No longer needed for Owl.Spinner teardown since CaptureOutput
+      # uses synthetic refs, but kept for elapsed-time stability.)
       Process.sleep(10)
       Renderer.finalize(name)
       Process.sleep(10)
