@@ -120,7 +120,10 @@ defmodule CodePuppyControl.Tools.CommandRunnerTest do
       assert result.stdout =~ "hello world"
       assert result.timeout == false
       assert result.error == nil
-      assert result.execution_time_ms > 0
+      # (code-puppy-mkk.6) Timer-resolution flake: sub-ms commands can
+      # round to 0 on some OS timers. Assert non-negative number instead of > 0.
+      assert is_number(result.execution_time_ms)
+      assert result.execution_time_ms >= 0
     end
 
     test "captures stderr output merged with stdout" do

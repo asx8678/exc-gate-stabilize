@@ -76,6 +76,18 @@ else
     SUCCESS=1
 fi
 
+# (code-puppy-mkk.5) Explicit deps.compile before compile. In a fresh
+# worktree (no _build/ or deps/), mix compile implicitly resolves+compiles
+# deps, which races with :elixir_code_server lock and parallel NIF
+# compilation. Serializing deps.get → deps.compile → compile eliminates
+# the race. Idempotent fast no-op in already-built worktrees.
+if mix deps.compile 2>&1; then
+    log_success "Dependencies compiled"
+else
+    log_error "Failed to compile dependencies"
+    SUCCESS=1
+fi
+
 if mix compile --warnings-as-errors 2>&1 | tee /tmp/compile.log; then
     if grep -q "warning:" /tmp/compile.log; then
         log_warning "Compilation had warnings (treating as errors)"

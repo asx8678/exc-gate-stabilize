@@ -31,6 +31,8 @@ defmodule CodePuppyControl.SessionStoragePubSubTest do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
     :ok = Ecto.Adapters.SQL.Sandbox.mode(Repo, {:shared, self()})
 
+    prefix = "pubsub_#{System.unique_integer([:positive])}"
+
     tmp =
       Path.join(System.tmp_dir!(), "session_pubsub_test_#{System.unique_integer([:positive])}")
 
@@ -38,6 +40,22 @@ defmodule CodePuppyControl.SessionStoragePubSubTest do
 
     on_exit(fn ->
       File.rm_rf!(tmp)
+
+      # (code-puppy-mkk.4) Clean up ETS entries by prefix — the sandbox
+      # rolls back SQLite, but ETS persists across tests since the Store
+      # GenServer is long-lived and doesn't re-init between test cases.
+      # Same closure-capture bug as code-puppy-dt3: prefix-based deletion
+      # correctly removes all sessions created by this test.
+      for {name, _} <- :ets.tab2list(:session_store_ets) do
+        if String.starts_with?(to_string(name), prefix) do
+          try do
+            :ets.delete(:session_store_ets, name)
+            :ets.delete(:session_terminal_ets, name)
+          catch
+            :error, :badarg -> :ok
+          end
+        end
+      end
 
       # Unsubscribe from any PubSub topics to avoid cross-test pollution
       try do
@@ -47,7 +65,12 @@ defmodule CodePuppyControl.SessionStoragePubSubTest do
       end
     end)
 
-    {:ok, base_dir: tmp}
+    {:ok, prefix: prefix, base_dir: tmp}
+  end
+
+  # Helper: generate a unique session name for this test run
+  defp session_name(prefix, label) do
+    "#{prefix}-#{label}"
   end
 
   # ---------------------------------------------------------------------------
@@ -55,29 +78,29 @@ defmodule CodePuppyControl.SessionStoragePubSubTest do
   # ---------------------------------------------------------------------------
 
   describe "subscribe/1 and unsubscribe/1" do
-    test "subscribes to a session-specific topic and receives events" do
-      session_name = "test-subscribe"
+    test "subscribes to a session-specific topic and receives events", ctx do
+      name = session_name(ctx.prefix, "subscribe")
 
-      assert :ok = SessionStorage.subscribe(session_name)
+      assert :ok = SessionStorage.subscribe(name)
 
       # Save session — should broadcast per-session event
       {:ok, _} =
-        SessionStorage.save_session(session_name, [%{"role" => "user", "content" => "hi"}])
+        SessionStorage.save_session(name, [%{"role" => "user", "content" => "hi"}])
 
-      assert_receive {:session_event, %{type: :saved, name: ^session_name}}, 500
+      assert_receive {:session_event, %{type: :saved, name: ^name}}, 500
 
-      :ok = SessionStorage.unsubscribe(session_name)
+      :ok = SessionStorage.unsubscribe(name)
     end
 
-    test "unsubscribe removes subscription" do
-      session_name = "test-unsubscribe"
+    test "unsubscribe removes subscription", ctx do
+      name = session_name(ctx.prefix, "unsubscribe")
 
-      :ok = SessionStorage.subscribe(session_name)
-      :ok = SessionStorage.unsubscribe(session_name)
+      :ok = SessionStorage.subscribe(name)
+      :ok = SessionStorage.unsubscribe(name)
 
       # After unsubscribe, should not receive events
       {:ok, _} =
-        SessionStorage.save_session(session_name, [%{"role" => "user", "content" => "hi"}])
+        SessionStorage.save_session(name, [%{"role" => "user", "content" => "hi"}])
 
       refute_receive {:session_event, _}, 100
     end
@@ -88,28 +111,28 @@ defmodule CodePuppyControl.SessionStoragePubSubTest do
   # ---------------------------------------------------------------------------
 
   describe "subscribe_all/0 and unsubscribe_all/0" do
-    test "subscribes to global session events and receives legacy-shape events" do
-      session_name = "global-test"
+    test "subscribes to global session events and receives legacy-shape events", ctx do
+      name = session_name(ctx.prefix, "global-test")
 
       assert :ok = SessionStorage.subscribe_all()
 
       {:ok, _} =
-        SessionStorage.save_session(session_name, [%{"role" => "user", "content" => "hi"}])
+        SessionStorage.save_session(name, [%{"role" => "user", "content" => "hi"}])
 
       # Global topic uses legacy tuple shape
-      assert_receive {:session_saved, ^session_name, _meta}, 500
+      assert_receive {:session_saved, ^name, _meta}, 500
 
       :ok = SessionStorage.unsubscribe_all()
     end
 
-    test "unsubscribe_all stops receiving global events" do
-      session_name = "global-unsub-test"
+    test "unsubscribe_all stops receiving global events", ctx do
+      name = session_name(ctx.prefix, "global-unsub-test")
 
       :ok = SessionStorage.subscribe_all()
       :ok = SessionStorage.unsubscribe_all()
 
       {:ok, _} =
-        SessionStorage.save_session(session_name, [%{"role" => "user", "content" => "hi"}])
+        SessionStorage.save_session(name, [%{"role" => "user", "content" => "hi"}])
 
       refute_receive {:session_saved, _, _}, 100
     end
@@ -120,67 +143,68 @@ defmodule CodePuppyControl.SessionStoragePubSubTest do
   # ---------------------------------------------------------------------------
 
   describe "event shapes from Store operations" do
-    test "save_session broadcasts per-session :saved event with payload" do
-      session_name = "shape-save-test"
+    test "save_session broadcasts per-session :saved event with payload", ctx do
+      name = session_name(ctx.prefix, "shape-save-test")
 
-      :ok = SessionStorage.subscribe(session_name)
+      :ok = SessionStorage.subscribe(name)
 
       {:ok, _} =
-        SessionStorage.save_session(session_name, [%{"role" => "user", "content" => "test"}],
+        SessionStorage.save_session(name, [%{"role" => "user", "content" => "test"}],
           total_tokens: 42
         )
 
       assert_receive {:session_event, event}, 500
 
       assert event.type == :saved
-      assert event.name == session_name
+      assert event.name == name
       assert event.timestamp != nil
       assert event.payload.total_tokens == 42
     end
 
-    test "delete_session broadcasts per-session :deleted event" do
-      session_name = "shape-delete-test"
+    test "delete_session broadcasts per-session :deleted event", ctx do
+      name = session_name(ctx.prefix, "shape-delete-test")
 
       {:ok, _} =
-        SessionStorage.save_session(session_name, [%{"role" => "user", "content" => "test"}])
+        SessionStorage.save_session(name, [%{"role" => "user", "content" => "test"}])
 
-      :ok = SessionStorage.subscribe(session_name)
-      :ok = SessionStorage.delete_session(session_name)
+      :ok = SessionStorage.subscribe(name)
+      :ok = SessionStorage.delete_session(name)
 
-      assert_receive {:session_event, %{type: :deleted, name: ^session_name}}, 500
+      assert_receive {:session_event, %{type: :deleted, name: ^name}}, 500
     end
 
-    test "update_session broadcasts per-session :updated event" do
-      session_name = "shape-update-test"
+    test "update_session broadcasts per-session :updated event", ctx do
+      name = session_name(ctx.prefix, "shape-update-test")
 
       {:ok, _} =
-        SessionStorage.save_session(session_name, [%{"role" => "user", "content" => "test"}])
+        SessionStorage.save_session(name, [%{"role" => "user", "content" => "test"}])
 
-      :ok = SessionStorage.subscribe(session_name)
+      :ok = SessionStorage.subscribe(name)
 
       {:ok, _} =
-        SessionStorage.update_session(session_name, total_tokens: 999)
+        SessionStorage.update_session(name, total_tokens: 999)
 
-      assert_receive {:session_event, %{type: :updated, name: ^session_name}}, 500
+      assert_receive {:session_event, %{type: :updated, name: ^name}}, 500
     end
 
-    test "cleanup_sessions broadcasts per-session :deleted events" do
+    test "cleanup_sessions broadcasts per-session :deleted events", ctx do
       # Create 3 sessions
       for i <- 1..3 do
         {:ok, _} =
-          SessionStorage.save_session("cleanup-test-#{i}", [
+          SessionStorage.save_session(session_name(ctx.prefix, "cleanup-test-#{i}"), [
             %{"role" => "user", "content" => "#{i}"}
           ])
       end
 
       # Subscribe to one of the sessions that will be cleaned up
-      :ok = SessionStorage.subscribe("cleanup-test-1")
+      cleanup_name = session_name(ctx.prefix, "cleanup-test-1")
+      :ok = SessionStorage.subscribe(cleanup_name)
 
       # Keep only 1 session (deletes the oldest 2)
       {:ok, _deleted} = SessionStorage.cleanup_sessions(1)
 
       # The per-session event should fire for each deleted session
-      assert_receive {:session_event, %{type: :deleted, name: "cleanup-test-1"}}, 500
+      assert_receive {:session_event, %{type: :deleted, name: ^cleanup_name}}, 500
     end
   end
 
@@ -189,27 +213,27 @@ defmodule CodePuppyControl.SessionStoragePubSubTest do
   # ---------------------------------------------------------------------------
 
   describe "global event shapes (legacy tuples)" do
-    test "save_session broadcasts {:session_saved, name, meta} on global topic" do
-      session_name = "global-save-test"
+    test "save_session broadcasts {:session_saved, name, meta} on global topic", ctx do
+      name = session_name(ctx.prefix, "global-save-test")
 
       :ok = SessionStorage.subscribe_all()
 
       {:ok, _} =
-        SessionStorage.save_session(session_name, [%{"role" => "user", "content" => "test"}])
+        SessionStorage.save_session(name, [%{"role" => "user", "content" => "test"}])
 
-      assert_receive {:session_saved, ^session_name, _meta}, 500
+      assert_receive {:session_saved, ^name, _meta}, 500
     end
 
-    test "delete_session broadcasts {:session_deleted, name} on global topic" do
-      session_name = "global-delete-test"
+    test "delete_session broadcasts {:session_deleted, name} on global topic", ctx do
+      name = session_name(ctx.prefix, "global-delete-test")
 
       {:ok, _} =
-        SessionStorage.save_session(session_name, [%{"role" => "user", "content" => "test"}])
+        SessionStorage.save_session(name, [%{"role" => "user", "content" => "test"}])
 
       :ok = SessionStorage.subscribe_all()
-      :ok = SessionStorage.delete_session(session_name)
+      :ok = SessionStorage.delete_session(name)
 
-      assert_receive {:session_deleted, ^session_name}, 500
+      assert_receive {:session_deleted, ^name}, 500
     end
   end
 
@@ -218,25 +242,25 @@ defmodule CodePuppyControl.SessionStoragePubSubTest do
   # ---------------------------------------------------------------------------
 
   describe "all expected event types fire" do
-    test ":saved, :updated, :deleted on per-session topic" do
-      session_name = "event-types-test"
+    test ":saved, :updated, :deleted on per-session topic", ctx do
+      name = session_name(ctx.prefix, "event-types-test")
 
-      :ok = SessionStorage.subscribe(session_name)
+      :ok = SessionStorage.subscribe(name)
 
       # :saved
       {:ok, _} =
-        SessionStorage.save_session(session_name, [%{"role" => "user", "content" => "test"}])
+        SessionStorage.save_session(name, [%{"role" => "user", "content" => "test"}])
 
       assert_receive {:session_event, %{type: :saved}}, 500
 
       # :updated
       {:ok, _} =
-        SessionStorage.update_session(session_name, total_tokens: 42)
+        SessionStorage.update_session(name, total_tokens: 42)
 
       assert_receive {:session_event, %{type: :updated}}, 500
 
       # :deleted
-      :ok = SessionStorage.delete_session(session_name)
+      :ok = SessionStorage.delete_session(name)
       assert_receive {:session_event, %{type: :deleted}}, 500
     end
   end
@@ -246,31 +270,31 @@ defmodule CodePuppyControl.SessionStoragePubSubTest do
   # ---------------------------------------------------------------------------
 
   describe "save_session_async/3 with PubSub" do
-    test "async save triggers per-session broadcast" do
-      session_name = "async-pubsub-test"
+    test "async save triggers per-session broadcast", ctx do
+      name = session_name(ctx.prefix, "async-pubsub-test")
 
-      :ok = SessionStorage.subscribe(session_name)
+      :ok = SessionStorage.subscribe(name)
 
       :ok =
-        SessionStorage.save_session_async(session_name, [
+        SessionStorage.save_session_async(name, [
           %{"role" => "user", "content" => "async"}
         ])
 
       # Wait for the background Task to complete and event to fire
-      assert_receive {:session_event, %{type: :saved, name: ^session_name}}, 1000
+      assert_receive {:session_event, %{type: :saved, name: ^name}}, 1000
     end
 
-    test "async save triggers global broadcast" do
-      session_name = "async-global-test"
+    test "async save triggers global broadcast", ctx do
+      name = session_name(ctx.prefix, "async-global-test")
 
       :ok = SessionStorage.subscribe_all()
 
       :ok =
-        SessionStorage.save_session_async(session_name, [
+        SessionStorage.save_session_async(name, [
           %{"role" => "user", "content" => "async"}
         ])
 
-      assert_receive {:session_saved, ^session_name, _meta}, 1000
+      assert_receive {:session_saved, ^name, _meta}, 1000
     end
   end
 
@@ -279,18 +303,18 @@ defmodule CodePuppyControl.SessionStoragePubSubTest do
   # ---------------------------------------------------------------------------
 
   describe "dual subscription" do
-    test "process receives both per-session and global events" do
-      session_name = "dual-sub-test"
+    test "process receives both per-session and global events", ctx do
+      name = session_name(ctx.prefix, "dual-sub-test")
 
-      :ok = SessionStorage.subscribe(session_name)
+      :ok = SessionStorage.subscribe(name)
       :ok = SessionStorage.subscribe_all()
 
       {:ok, _} =
-        SessionStorage.save_session(session_name, [%{"role" => "user", "content" => "dual"}])
+        SessionStorage.save_session(name, [%{"role" => "user", "content" => "dual"}])
 
       # Should receive both event shapes
-      assert_receive {:session_event, %{type: :saved, name: ^session_name}}, 500
-      assert_receive {:session_saved, ^session_name, _meta}, 500
+      assert_receive {:session_event, %{type: :saved, name: ^name}}, 500
+      assert_receive {:session_saved, ^name, _meta}, 500
     end
   end
 end
