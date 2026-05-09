@@ -53,6 +53,12 @@ defmodule CodePuppyControl.TUI.Renderer do
   # Default character count threshold before buffer is flushed to terminal
   @default_flush_threshold 20
 
+  # Maximum dedup entries before FIFO eviction.  Bounds memory while
+  # providing a wide enough window to catch duplicates from overlapping
+  # PubSub topic subscriptions (session + run).  A typical agent run
+  # produces hundreds of events; 256 is conservative.
+  @dedup_cap 256
+
   # ── State ──────────────────────────────────────────────────────────────────
 
   defstruct [
@@ -80,7 +86,12 @@ defmodule CodePuppyControl.TUI.Renderer do
     # Rate throttle
     last_rate_update: 0,
     # Flush buffered text when it exceeds this character count
-    flush_threshold: @default_flush_threshold
+    flush_threshold: @default_flush_threshold,
+    # Event deduplication — prevents duplicate rendering when the
+    # Renderer is subscribed to multiple EventBus topics (e.g. both
+    # session and run) that carry the same event.
+    seen_events: MapSet.new(),
+    seen_events_queue: :queue.new()
   ]
 
   @type t :: %__MODULE__{
@@ -100,7 +111,9 @@ defmodule CodePuppyControl.TUI.Renderer do
           spinner_ids: %{non_neg_integer() => reference()},
           loading_index: non_neg_integer(),
           last_rate_update: non_neg_integer(),
-          flush_threshold: non_neg_integer()
+          flush_threshold: non_neg_integer(),
+          seen_events: MapSet.t(),
+          seen_events_queue: :queue.queue()
         }
 
   @type monotonic_time :: integer()
@@ -283,9 +296,16 @@ defmodule CodePuppyControl.TUI.Renderer do
   @impl true
   def handle_info({:event, event}, state) when is_map(event) do
     state =
-      case EventMapper.event_to_canonical(event) do
-        {:ok, canonical} -> handle_stream_event(canonical, state)
-        :skip -> handle_eventbus_event(event, state)
+      if event_is_duplicate?(event, state) do
+        # Same event arrived via a second PubSub topic — skip
+        state
+      else
+        state = record_event(event, state)
+
+        case EventMapper.event_to_canonical(event) do
+          {:ok, canonical} -> handle_stream_event(canonical, state)
+          :skip -> handle_eventbus_event(event, state)
+        end
       end
 
     {:noreply, state}
@@ -372,7 +392,9 @@ defmodule CodePuppyControl.TUI.Renderer do
        topics: state.topics,
        start_time: System.monotonic_time(:millisecond),
        output_mod: state.output_mod,
-       flush_threshold: state.flush_threshold
+       flush_threshold: state.flush_threshold,
+       seen_events: MapSet.new(),
+       seen_events_queue: :queue.new()
      }}
   end
 
@@ -544,6 +566,54 @@ defmodule CodePuppyControl.TUI.Renderer do
   end
 
   defp handle_eventbus_event(_event, state), do: state
+
+  # ── Event Deduplication ──────────────────────────────────────────────────
+
+  # When the Renderer subscribes to multiple EventBus topics (e.g.
+  # both `session:<id>` and `run:<id>`), `broadcast_event/2` delivers
+  # the same event map to each topic.  Without dedup, every event is
+  # processed twice — doubling text output, token counts, banners, etc.
+  #
+  # We hash the event map and track recent hashes in a bounded FIFO
+  # set.  Phoenix.PubSub delivers duplicate messages nearly
+  # simultaneously (same `broadcast_event` call), so a small window
+  # is sufficient.  The cap prevents unbounded growth across long
+  # sessions.
+
+  @doc false
+  @spec event_is_duplicate?(map(), t()) :: boolean()
+  defp event_is_duplicate?(event, state) do
+    dedup_key = dedup_key(event)
+    MapSet.member?(state.seen_events, dedup_key)
+  end
+
+  @doc false
+  @spec record_event(map(), t()) :: t()
+  defp record_event(event, state) do
+    dedup_key = dedup_key(event)
+    seen = MapSet.put(state.seen_events, dedup_key)
+    queue = :queue.in(dedup_key, state.seen_events_queue)
+
+    # Evict oldest entry when the dedup set exceeds the cap
+    {seen, queue} =
+      if :queue.len(queue) > @dedup_cap do
+        {{:value, oldest}, queue} = :queue.out(queue)
+        {MapSet.delete(seen, oldest), queue}
+      else
+        {seen, queue}
+      end
+
+    %{state | seen_events: seen, seen_events_queue: queue}
+  end
+
+  # Hash an EventBus event for dedup.  Uses :erlang.phash2 on the
+  # event map for O(1) computation.  Collisions are possible but
+  # extremely unlikely for distinct events within a @dedup_cap
+  # window (2^27 hash space).  A rare false positive would suppress
+  # one legitimate event — a minor visual glitch, not a crash or
+  # data loss.
+  @spec dedup_key(map()) :: non_neg_integer()
+  defp dedup_key(event), do: :erlang.phash2(event)
 
   # ── Part Cleanup ──────────────────────────────────────────────────────────
 
