@@ -31,6 +31,8 @@ Default gates:
     uv run pytest tests
 
   Elixir (from repository root):
+    mix deps.get
+    mix deps.compile
     mix format --check-formatted
     mix compile --warnings-as-errors
     mix test
@@ -199,9 +201,52 @@ run_elixir_gate() {
 
   if ! command -v mix >/dev/null 2>&1; then
     record_failure "Elixir toolchain" "mix not found on PATH"
+    record_skip "Elixir dependencies" "mix unavailable"
+    record_skip "Elixir deps compile" "mix unavailable"
+    record_skip "Elixir format" "mix unavailable"
+    record_skip "Elixir compile" "mix unavailable"
     record_skip "Elixir tests" "mix unavailable"
     record_skip "Elixir smoke" "mix unavailable"
     record_skip "Elixir packaged smoke" "mix unavailable"
+    return 0
+  fi
+
+  # (code-puppy-mkk.1) Explicit dependency resolution and compilation
+  # before format/compile gates. In a fresh worktree (no _build/ or deps/),
+  # mix compile implicitly resolves+compiles deps, which races with
+  # :elixir_code_server lock and parallel NIF compilation. Serializing
+  # deps.get → deps.compile → compile eliminates the race. Both are
+  # idempotent fast no-ops in already-built worktrees.
+  run_step "Elixir dependencies" "$elixir_dir" mix deps.get
+  if [[ "$LAST_STATUS" -ne 0 ]]; then
+    record_skip "Elixir deps compile" "deps.get failed"
+    record_skip "Elixir format" "deps.get failed"
+    record_skip "Elixir compile" "deps.get failed"
+    record_skip "Elixir tests" "deps.get failed"
+    if [[ "$RUN_INTEGRATION" == "true" ]]; then
+      record_skip "Elixir integration tests" "deps.get failed"
+    fi
+    if [[ "$RUN_E2E" == "true" ]]; then
+      record_skip "Elixir e2e tests" "deps.get failed"
+    fi
+    record_skip "Elixir smoke" "deps.get failed"
+    record_skip "Elixir packaged smoke" "deps.get failed"
+    return 0
+  fi
+
+  run_step "Elixir deps compile" "$elixir_dir" mix deps.compile
+  if [[ "$LAST_STATUS" -ne 0 ]]; then
+    record_skip "Elixir format" "deps.compile failed"
+    record_skip "Elixir compile" "deps.compile failed"
+    record_skip "Elixir tests" "deps.compile failed"
+    if [[ "$RUN_INTEGRATION" == "true" ]]; then
+      record_skip "Elixir integration tests" "deps.compile failed"
+    fi
+    if [[ "$RUN_E2E" == "true" ]]; then
+      record_skip "Elixir e2e tests" "deps.compile failed"
+    fi
+    record_skip "Elixir smoke" "deps.compile failed"
+    record_skip "Elixir packaged smoke" "deps.compile failed"
     return 0
   fi
 

@@ -112,7 +112,7 @@ Four parallel validation lanes confirmed the root restructure is complete and fu
 | `elixir/` directory | ✅ **Absent** — wrapper directory correctly removed |
 | Active stale `elixir/code_puppy_control` refs | ✅ **Zero** — all remaining hits in explicitly labeled historical/plan/audit docs |
 | `bash -n` on release/build/smoke scripts | ✅ PASS (7/8; `scripts/pre-commit` correct absence, lives at `scripts/git-hooks/`) |
-| `scripts/release-gate.sh` fresh worktree | ⚠️ Dependency/compile race in worktree-first compile (parallel NIF + `:elixir_code_server`). Gate structurally sound; use `mix deps.get` + `mix compile` before gate in fresh worktrees. Not a blocker. |
+| `scripts/release-gate.sh` fresh worktree | ✅ **Fixed** (`code-puppy-mkk.1`): gate now runs `mix deps.get` → `mix deps.compile` before `mix format`/`mix compile`, eliminating the NIF + `:elixir_code_server` lock race in fresh worktrees. |
 
 ### Stage A Assessment
 
