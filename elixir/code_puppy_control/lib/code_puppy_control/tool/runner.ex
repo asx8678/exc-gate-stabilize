@@ -287,29 +287,34 @@ defmodule CodePuppyControl.Tool.Runner do
   end
 
   defp run_with_timeout(module, tool_name, args, context, timeout) do
-    task =
-      Task.async(fn ->
-        # 1. Permission check
-        with :ok <- check_permission(module, args, context) do
-          # 2. Schema validation (only for modules with the Tool behaviour)
-          with :ok <- validate_args(module, args) do
-            # 3. Invoke the tool
-            invoke_tool(module, tool_name, args, context)
-          end
+    # Permission check runs in the calling process (agent loop / REPL)
+    # so that interactive prompts (IO.gets) work correctly via the
+    # standard group leader chain.
+    case check_permission(module, args, context) do
+      :ok ->
+        # Tool execution with timeout protection
+        task =
+          Task.async(fn ->
+            with :ok <- validate_args(module, args) do
+              invoke_tool(module, tool_name, args, context)
+            end
+          end)
+
+        case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
+          {:ok, result} ->
+            result
+
+          nil ->
+            Logger.warning("Tool #{tool_name} timed out after #{timeout}ms")
+            {:error, "Tool #{tool_name} timed out after #{timeout}ms"}
+
+          {:exit, reason} ->
+            Logger.warning("Tool #{tool_name} crashed: #{inspect(reason)}")
+            {:error, "Tool #{tool_name} crashed: #{inspect(reason)}"}
         end
-      end)
 
-    case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
-      {:ok, result} ->
-        result
-
-      nil ->
-        Logger.warning("Tool #{tool_name} timed out after #{timeout}ms")
-        {:error, "Tool #{tool_name} timed out after #{timeout}ms"}
-
-      {:exit, reason} ->
-        Logger.warning("Tool #{tool_name} crashed: #{inspect(reason)}")
-        {:error, "Tool #{tool_name} crashed: #{inspect(reason)}"}
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
