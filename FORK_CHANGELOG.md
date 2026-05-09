@@ -7,6 +7,25 @@ For per-commit detail, see `git log`.
 
 ## Release History
 
+### v0.1.0 (2026-05-09) — Elixir-native release stream
+
+- **Phase J root restructure**: Elixir app moved from nested subdirectory to
+  repository root. All CI workflows, scripts, Python bridge paths, and
+  documentation updated for new layout.
+- **TUI flake fix** (code-puppy-268): Owl.IO.select/CaptureIO GenServer timeout
+  flakes resolved via `force_fallback_select` env + `CaptureIO("\n")`.
+- **Session storage flake fix** (code-puppy-dt3): SQLite busy concurrency flakes
+  resolved via prefixed ETS table names + `safe_insert`/`safe_lookup` wrappers.
+- **Release-gate race fix** (code-puppy-mkk.1): Fresh-worktree dependency
+  compilation race eliminated by adding explicit `mix deps.get` → `mix deps.compile`
+  before format/compile gates.
+- **TUI spinner fix**: Duplicate tool-call spinners eliminated.
+- **Python compatibility audit**: Documented Elixir-first/Python-optional runtime
+  guarantee for 0.1.x stream.
+- **Known P3 follow-ups**: ETS cleanup closure in pubsub test (mkk.4),
+  `validate_mvp.sh` deps.compile gap (mkk.5), CommandRunnerTest timing flake.
+- Validation: `docs/release/v0.1.0-validation.md`
+
 ### codepp 0.0.456 (2026-05-05) — Python/PyPI compatibility stream
 
 - **Phase 1 `pup` alias deprecation**: opt-in warning via
