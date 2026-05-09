@@ -12,7 +12,12 @@ defmodule CodePuppyControl.SessionStorageFacadeTest do
   The Ecto sandbox is checked out in {:shared, self()} mode so the Store
   GenServer can use the same sandbox connection. SQLite changes are rolled
   back automatically when the connection is released; ETS entries are
-  cleaned up explicitly in on_exit to prevent cross-test pollution.
+  cleaned up explicitly in on_exit (using prefix-based deletion) to
+  prevent cross-test pollution.
+
+  (code-puppy-dt3) Transient SQLite "database busy" errors under concurrent
+  test load are handled by retry_transient/1, which retries
+  {:error, :database_busy} and {:error, :repo_unavailable} with backoff.
   """
 
   use ExUnit.Case, async: false
@@ -29,23 +34,27 @@ defmodule CodePuppyControl.SessionStorageFacadeTest do
     :ok = Ecto.Adapters.SQL.Sandbox.mode(Repo, {:shared, self()})
 
     prefix = "facade_#{System.unique_integer([:positive])}"
-    created_sessions = []
 
     on_exit(fn ->
-      # Clean up ETS entries directly — the sandbox rolls back SQLite,
-      # but ETS persists across tests since the Store GenServer is
-      # long-lived and doesn't re-init between test cases.
-      Enum.each(created_sessions, fn name ->
-        try do
-          :ets.delete(:session_store_ets, name)
-          :ets.delete(:session_terminal_ets, name)
-        catch
-          :error, :badarg -> :ok
+      # (code-puppy-dt3) Clean up ETS entries by prefix — the sandbox
+      # rolls back SQLite, but ETS persists across tests since the Store
+      # GenServer is long-lived and doesn't re-init between test cases.
+      # Previous implementation captured `created_sessions` at setup time
+      # (always []), so the cleanup was a no-op. Prefix-based deletion
+      # correctly removes all sessions created by this test.
+      for {name, _} <- :ets.tab2list(:session_store_ets) do
+        if String.starts_with?(to_string(name), prefix) do
+          try do
+            :ets.delete(:session_store_ets, name)
+            :ets.delete(:session_terminal_ets, name)
+          catch
+            :error, :badarg -> :ok
+          end
         end
-      end)
+      end
     end)
 
-    {:ok, prefix: prefix, created_sessions: created_sessions}
+    {:ok, prefix: prefix}
   end
 
   # Helper: generate a unique session name for this test run
@@ -53,16 +62,34 @@ defmodule CodePuppyControl.SessionStorageFacadeTest do
     "#{prefix}-#{label}"
   end
 
-  # Helper: track a session for on_exit cleanup
-  defp track!(state, name) do
-    {:ok, prefix: state.prefix, created_sessions: [name | state.created_sessions]}
+  # (code-puppy-dt3) Retry transient SQLite errors (database busy /
+  # repo unavailable) that can occur under concurrent test load.
+  # Retries up to 3 times with 100ms backoff between attempts.
+  defp retry_transient(fun, retries \\ 3)
+
+  defp retry_transient(fun, 0), do: fun.()
+
+  defp retry_transient(fun, retries) do
+    case fun.() do
+      {:error, :database_busy} ->
+        Process.sleep(100)
+        retry_transient(fun, retries - 1)
+
+      {:error, :repo_unavailable} ->
+        Process.sleep(100)
+        retry_transient(fun, retries - 1)
+
+      result ->
+        result
+    end
   end
 
   # Helper: save a session through the Store facade (no base_dir)
   defp facade_save!(state, label, messages, opts \\ []) do
     name = session_name(state.prefix, label)
-    assert {:ok, _meta} = SessionStorage.save_session(name, messages, opts)
-    track!(state, name)
+
+    assert {:ok, _meta} =
+             retry_transient(fn -> SessionStorage.save_session(name, messages, opts) end)
   end
 
   # ---------------------------------------------------------------------------
@@ -141,8 +168,10 @@ defmodule CodePuppyControl.SessionStorageFacadeTest do
       messages = [%{"role" => "user", "content" => "export me"}]
       name = session_name(ctx.prefix, "export-test")
 
-      assert {:ok, _meta} = SessionStorage.save_session(name, messages, total_tokens: 42)
-      _ctx = track!(ctx, name)
+      assert {:ok, _meta} =
+               retry_transient(fn ->
+                 SessionStorage.save_session(name, messages, total_tokens: 42)
+               end)
 
       assert {:ok, json} = SessionStorage.export_session(name)
       assert is_binary(json)
@@ -156,8 +185,8 @@ defmodule CodePuppyControl.SessionStorageFacadeTest do
       messages = [%{"role" => "user", "content" => "file export"}]
       name = session_name(ctx.prefix, "file-export")
 
-      assert {:ok, _meta} = SessionStorage.save_session(name, messages)
-      _ctx = track!(ctx, name)
+      assert {:ok, _meta} =
+               retry_transient(fn -> SessionStorage.save_session(name, messages) end)
 
       output =
         Path.join(
@@ -250,12 +279,12 @@ defmodule CodePuppyControl.SessionStorageFacadeTest do
       name = session_name(ctx.prefix, "meta-check")
 
       assert {:ok, _} =
-               SessionStorage.save_session(name, [%{"role" => "user", "content" => "x"}],
-                 total_tokens: 42,
-                 auto_saved: true
-               )
-
-      _ctx = track!(ctx, name)
+               retry_transient(fn ->
+                 SessionStorage.save_session(name, [%{"role" => "user", "content" => "x"}],
+                   total_tokens: 42,
+                   auto_saved: true
+                 )
+               end)
 
       assert {:ok, all_meta} = SessionStorage.list_sessions_with_metadata([])
 
@@ -295,7 +324,10 @@ defmodule CodePuppyControl.SessionStorageFacadeTest do
       newest_name = session_name(ctx.prefix, "newest")
 
       # We added 3 sessions. Keep total_before + 2 → delete exactly 1 globally.
-      assert {:ok, deleted} = SessionStorage.cleanup_sessions(total_before + 2)
+      assert {:ok, deleted} =
+               retry_transient(fn ->
+                 SessionStorage.cleanup_sessions(total_before + 2)
+               end)
 
       # Exactly 1 session should have been deleted
       assert length(deleted) == 1

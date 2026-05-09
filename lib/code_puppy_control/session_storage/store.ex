@@ -27,6 +27,13 @@ defmodule CodePuppyControl.SessionStorage.Store do
   # not be available in packaged releases. Capture it at compile time instead.
   @env Mix.env()
 
+  # (code-puppy-dt3) SQLite "database busy" retries: transient write-lock
+  # contention under concurrent test load. In test env, retry 3× with
+  # backoff (50ms / 100ms / 200ms) before returning {:error, :database_busy}.
+  # In non-test env, don't retry — production busy_timeout (5s) should
+  # suffice, and silent retries could mask real contention.
+  @db_busy_max_retries if(@env == :test, do: 3, else: 0)
+
   # ---------------------------------------------------------------------------
   # Types
   # ---------------------------------------------------------------------------
@@ -428,11 +435,29 @@ defmodule CodePuppyControl.SessionStorage.Store do
   # real persistence failures stay visible. (code_puppy-i1n)
   # (code-puppy-be7) Also catches RuntimeError when Repo is not started
   # (escript mode).
+  # (code-puppy-dt3) Also catches Exqlite.Error for "database busy" with
+  # retry + backoff in test env.
   defp safe_repo(fun) do
+    safe_repo(fun, @db_busy_max_retries)
+  end
+
+  defp safe_repo(fun, retries_left) do
     fun.()
   rescue
     e in [DBConnection.OwnershipError] ->
       handle_repo_error(e, __STACKTRACE__)
+
+    e in Exqlite.Error ->
+      if database_busy?(e) and retries_left > 0 do
+        backoff = db_busy_backoff(retries_left)
+
+        Logger.debug("Store: SQLite busy, retrying (#{retries_left} left, #{backoff}ms backoff)")
+
+        Process.sleep(backoff)
+        safe_repo(fun, retries_left - 1)
+      else
+        handle_exqlite_busy_error(e, __STACKTRACE__)
+      end
 
     e in RuntimeError ->
       if String.contains?(Exception.message(e), "could not lookup Ecto repo") do
@@ -440,6 +465,38 @@ defmodule CodePuppyControl.SessionStorage.Store do
       else
         reraise e, __STACKTRACE__
       end
+  end
+
+  # (code-puppy-dt3) Detects SQLite write-lock contention errors that
+  # are transient and retryable. Matches the canonical SQLite error
+  # messages "database is busy" and "database is locked".
+  defp database_busy?(%Exqlite.Error{message: msg}) when is_binary(msg) do
+    lower = String.downcase(msg)
+
+    String.contains?(lower, "database is busy") or
+      String.contains?(lower, "database is locked")
+  end
+
+  defp database_busy?(_), do: false
+
+  # (code-puppy-dt3) Exponential-ish backoff for SQLite busy retries.
+  # 3 retries left → 50ms, 2 → 100ms, 1 → 200ms.
+  defp db_busy_backoff(retries_left) when retries_left >= 3, do: 50
+  defp db_busy_backoff(retries_left) when retries_left >= 2, do: 100
+  defp db_busy_backoff(_), do: 200
+
+  # (code-puppy-dt3) Handles Exqlite.Error after retries are exhausted
+  # (or in non-test env where retries are disabled).
+  defp handle_exqlite_busy_error(e, stacktrace) do
+    if @env == :test do
+      Logger.warning(
+        "Store: SQLite error after retries (#{Exception.message(e)}); returning :database_busy"
+      )
+
+      {:error, :database_busy}
+    else
+      reraise e, stacktrace
+    end
   end
 
   defp handle_init_repo_error(%DBConnection.OwnershipError{} = e, stacktrace) do
@@ -455,14 +512,25 @@ defmodule CodePuppyControl.SessionStorage.Store do
   end
 
   defp handle_init_repo_error(%Exqlite.Error{} = e, stacktrace) do
-    if @env == :test and missing_table_error?(e) do
-      Logger.warning(
-        "SessionStorage.Store: test DB schema unavailable during init (#{Exception.message(e)}); skipping disk recovery"
-      )
+    cond do
+      @env == :test and missing_table_error?(e) ->
+        Logger.warning(
+          "SessionStorage.Store: test DB schema unavailable during init (#{Exception.message(e)}); skipping disk recovery"
+        )
 
-      0
-    else
-      reraise e, stacktrace
+        0
+
+      @env == :test and database_busy?(e) ->
+        # (code-puppy-dt3) Transient contention during init recovery —
+        # start with 0 sessions; they'll be recovered on next restart.
+        Logger.warning(
+          "SessionStorage.Store: SQLite busy during init (#{Exception.message(e)}); skipping disk recovery"
+        )
+
+        0
+
+      true ->
+        reraise e, stacktrace
     end
   end
 
