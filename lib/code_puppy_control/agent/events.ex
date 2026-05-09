@@ -65,7 +65,8 @@ defmodule CodePuppyControl.Agent.Events do
   @doc """
   Builds a `tool_call_start` event.
   """
-  @spec tool_call_start(String.t(), String.t() | nil, atom(), map(), String.t()) :: map()
+  @spec tool_call_start(String.t(), String.t() | nil, atom() | String.t(), map(), String.t()) ::
+          map()
   def tool_call_start(run_id, session_id, tool_name, arguments, tool_call_id) do
     %{
       type: "agent_tool_call_start",
@@ -81,7 +82,8 @@ defmodule CodePuppyControl.Agent.Events do
   @doc """
   Builds a `tool_call_end` event.
   """
-  @spec tool_call_end(String.t(), String.t() | nil, atom(), term(), String.t()) :: map()
+  @spec tool_call_end(String.t(), String.t() | nil, atom() | String.t(), term(), String.t()) ::
+          map()
   def tool_call_end(run_id, session_id, tool_name, result, tool_call_id) do
     %{
       type: "agent_tool_call_end",

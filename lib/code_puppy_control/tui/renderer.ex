@@ -454,25 +454,33 @@ defmodule CodePuppyControl.TUI.Renderer do
   end
 
   defp handle_stream_event(%Event.ToolCallStart{index: idx, name: name}, state) do
-    state = %{
+    # Idempotent: if a spinner is already active for this index, skip
+    # starting a second one.  Duplicate ToolCallStart events can occur
+    # due to race conditions in event routing; overwriting the spinner
+    # ref would orphan the original Owl.Spinner process.
+    if Map.has_key?(state.spinner_ids, idx) do
       state
-      | streaming_parts: MapSet.put(state.streaming_parts, idx),
-        tool_parts: MapSet.put(state.tool_parts, idx),
-        banner_printed: MapSet.put(state.banner_printed, idx)
-    }
-
-    state.output_mod.tool_banner(name)
-
-    case state.output_mod.start_spinner(state.loading_index, idx) do
-      {ref, new_loading_index} ->
-        %{
-          state
-          | spinner_ids: Map.put(state.spinner_ids, idx, ref),
-            loading_index: new_loading_index
-        }
-
-      nil ->
+    else
+      state = %{
         state
+        | streaming_parts: MapSet.put(state.streaming_parts, idx),
+          tool_parts: MapSet.put(state.tool_parts, idx),
+          banner_printed: MapSet.put(state.banner_printed, idx)
+      }
+
+      state.output_mod.tool_banner(name)
+
+      case state.output_mod.start_spinner(state.loading_index, idx) do
+        {ref, new_loading_index} ->
+          %{
+            state
+            | spinner_ids: Map.put(state.spinner_ids, idx, ref),
+              loading_index: new_loading_index
+          }
+
+        nil ->
+          state
+      end
     end
   end
 

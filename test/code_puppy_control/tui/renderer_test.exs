@@ -6,6 +6,51 @@ defmodule CodePuppyControl.TUI.RendererTest do
   alias CodePuppyControl.Stream.Event
   alias CodePuppyControl.TUI.Renderer
 
+  # ── No-op output adapter for spinner-idempotency smoke tests ──────────
+  #
+  # Returns valid spinner refs without starting real Owl spinners.
+  # The Renderer's own query API (spinners_idle?, spinner_active?) is
+  # sufficient for smoke-testing idempotency. For full spy coverage that
+  # counts start_spinner/stop_spinner calls, see RendererDuplicateStartTest.
+
+  defmodule NoOpOutput do
+    @moduledoc false
+    @behaviour CodePuppyControl.TUI.Output
+
+    @impl true
+    def puts(_data), do: :ok
+
+    @impl true
+    def banner(_label, _color, _icon), do: :ok
+
+    @impl true
+    def tool_banner(_tool_name), do: :ok
+
+    @impl true
+    def start_spinner(loading_index, _idx) do
+      ref = make_ref()
+      {ref, loading_index + 1}
+    end
+
+    @impl true
+    def stop_spinner(_ref), do: :ok
+
+    @impl true
+    def stop_tool_spinner(spinner_ids, idx) do
+      case Map.get(spinner_ids, idx) do
+        nil -> spinner_ids
+        _ref -> Map.delete(spinner_ids, idx)
+      end
+    end
+
+    @impl true
+    def stop_all_spinners(_spinner_ids), do: %{}
+
+    @impl true
+    def color_background(:cyan), do: :cyan_background
+    def color_background(_), do: :blue_background
+  end
+
   # ── Helpers ────────────────────────────────────────────────────────────────
 
   # Starts a renderer without PubSub subscriptions (no session/run id).
@@ -302,6 +347,104 @@ defmodule CodePuppyControl.TUI.RendererTest do
     test "supports custom id via :id option" do
       spec = Renderer.child_spec(id: :my_renderer, session_id: "sess-2")
       assert spec.id == :my_renderer
+    end
+  end
+
+  # ── Duplicate ToolCallStart (orphaned-spinner regression) ─────────────────
+  #
+  # These tests verify internal renderer state (spinners_idle?, spinner_active?)
+  # as a fast smoke test.  For stronger regression coverage that verifies
+  # start_spinner/stop_spinner call counts and ref identity, see
+  # RendererDuplicateStartTest in renderer_duplicate_start_test.exs.
+
+  describe "duplicate ToolCallStart on same index" do
+    setup do
+      renderer_name =
+        :"renderer_dup_test_#{System.unique_integer([:positive])}"
+
+      {:ok, renderer_pid} =
+        Renderer.start_link(
+          name: renderer_name,
+          output_mod: NoOpOutput
+        )
+
+      on_exit(fn ->
+        if Process.alive?(renderer_pid), do: Renderer.stop(renderer_pid)
+      end)
+
+      {:ok, renderer_name: renderer_name, renderer_pid: renderer_pid}
+    end
+
+    test "duplicate ToolCallStart on same index keeps only one spinner", context do
+      renderer = context.renderer_name
+
+      # First ToolCallStart should create a spinner
+      Renderer.push(renderer, %Event.ToolCallStart{index: 1, name: "read_file"})
+      assert Renderer.spinner_active?(renderer, 1)
+
+      # Second ToolCallStart for the same index must NOT overwrite
+      # the spinner ref — it should be idempotent.
+      Renderer.push(renderer, %Event.ToolCallStart{index: 1, name: "read_file"})
+
+      # Then end the tool call
+      Renderer.push(renderer, %Event.ToolCallEnd{
+        index: 1,
+        name: "read_file",
+        id: "tc-1",
+        arguments: "{}"
+      })
+
+      Process.sleep(20)
+
+      # After one end event, the spinner must be cleaned up.
+      # Before the fix, the duplicate start overwrote the ref,
+      # so ToolCallEnd only stopped the second spinner, leaving
+      # the first orphaned.
+      refute Renderer.spinner_active?(renderer, 1)
+      assert Renderer.spinners_idle?(renderer)
+    end
+
+    test "after duplicate start + single end, spinners_idle? is true", context do
+      renderer = context.renderer_name
+
+      Renderer.push(renderer, %Event.ToolCallStart{index: 2, name: "grep"})
+      Renderer.push(renderer, %Event.ToolCallStart{index: 2, name: "grep"})
+
+      Renderer.push(renderer, %Event.ToolCallEnd{
+        index: 2,
+        name: "grep",
+        id: "tc-2",
+        arguments: "{}"
+      })
+
+      Process.sleep(20)
+
+      # The renderer's internal spinner_ids should be empty (all stopped)
+      assert Renderer.spinners_idle?(renderer)
+      refute Renderer.spinner_active?(renderer, 2)
+    end
+
+    test "idempotent ToolCallStart does not start second spinner", context do
+      renderer = context.renderer_name
+
+      Renderer.push(renderer, %Event.ToolCallStart{index: 3, name: "list_files"})
+      Renderer.push(renderer, %Event.ToolCallStart{index: 3, name: "list_files"})
+
+      # Still only one active spinner for index 3
+      assert Renderer.spinner_active?(renderer, 3)
+
+      Renderer.push(renderer, %Event.ToolCallEnd{
+        index: 3,
+        name: "list_files",
+        id: "tc-3",
+        arguments: "{}"
+      })
+
+      Process.sleep(20)
+
+      # Cleaned up properly
+      refute Renderer.spinner_active?(renderer, 3)
+      assert Renderer.spinners_idle?(renderer)
     end
   end
 

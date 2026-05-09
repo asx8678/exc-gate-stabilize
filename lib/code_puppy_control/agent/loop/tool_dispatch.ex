@@ -45,6 +45,18 @@ defmodule CodePuppyControl.Agent.Loop.ToolDispatch do
           "Agent.Loop: tool #{inspect(resolved_name)} not in allowed_tools for #{inspect(state.agent_module)}"
         )
 
+        # Emit balanced start/end lifecycle events so TUI spinners
+        # (and any other subscribers) see a proper pair.
+        Events.publish(
+          Events.tool_call_start(
+            state.run_id,
+            state.session_id,
+            resolved_name,
+            tool_call.arguments,
+            safe_id
+          )
+        )
+
         result_msg = %{
           role: "tool",
           tool_call_id: safe_id,

@@ -2,8 +2,11 @@ defmodule CodePuppyControl.Agent.Loop.Streaming do
   @moduledoc """
   Streaming and response accumulation logic for Agent.Loop.
 
-  Handles building the stream callback, parsing tool arguments from
-  JSON, and accumulating streamed responses into a `Turn` struct.
+  Handles building the stream callback and accumulating streamed
+  responses into a `Turn` struct.
+
+  Tool-call-lifecycle events are owned by `ToolDispatch`; this module
+  only emits `llm_stream` text-chunk events from the provider stream.
 
   Extracted from `Agent.Loop` to keep it under the 600-line hard cap.
   """
@@ -14,8 +17,14 @@ defmodule CodePuppyControl.Agent.Loop.Streaming do
   @doc """
   Build the callback function that receives streaming events from the LLM.
 
-  The callback publishes `llm_stream` and `tool_call_start` events via
-  the EventBus as they arrive.
+  The callback publishes `llm_stream` events via the EventBus as they arrive.
+
+  Tool-call-lifecycle events (`tool_call_start` / `tool_call_end`) are
+  emitted exclusively by `ToolDispatch` when actual tool execution begins
+  and ends.  Provider stream events (`%Event.ToolCallEnd{}`) signal only
+  that the model finished emitting a tool-call block — they must **not**
+  emit execution-lifecycle events, which would duplicate the ones from
+  `ToolDispatch` and cause orphaned spinners in the TUI.
   """
   @spec build_stream_callback(map()) :: (term() -> term())
   def build_stream_callback(state) do
@@ -23,12 +32,10 @@ defmodule CodePuppyControl.Agent.Loop.Streaming do
       {:stream, %Event.TextDelta{text: text}} when is_binary(text) ->
         Events.publish(Events.llm_stream(state.run_id, state.session_id, text))
 
-      {:stream, %Event.ToolCallEnd{name: name, arguments: args_json, id: id}} ->
-        arguments = parse_tool_arguments(args_json)
-
-        Events.publish(
-          Events.tool_call_start(state.run_id, state.session_id, name, arguments, id)
-        )
+      {:stream, %Event.ToolCallEnd{}} ->
+        # Provider finished emitting a tool-call block.
+        # Execution-lifecycle events are owned by ToolDispatch.
+        :ok
 
       {:stream, %Event.Done{}} ->
         :ok
@@ -40,22 +47,6 @@ defmodule CodePuppyControl.Agent.Loop.Streaming do
         :ok
     end
   end
-
-  @doc """
-  Parse tool arguments from a JSON string.
-
-  Returns the decoded map on success, or the raw string on failure.
-  Non-binary arguments pass through unchanged.
-  """
-  @spec parse_tool_arguments(term()) :: map() | String.t() | term()
-  def parse_tool_arguments(args_json) when is_binary(args_json) do
-    case Jason.decode(args_json) do
-      {:ok, parsed} when is_map(parsed) -> parsed
-      _ -> args_json
-    end
-  end
-
-  def parse_tool_arguments(args), do: args
 
   @doc """
   Accumulate a streamed LLM response into the turn.
