@@ -1,6 +1,5 @@
 <div align="center">
 
-**🐶✨The sassy AI code agent that makes IDEs look outdated** ✨🐶
 
 [![Elixir](https://img.shields.io/badge/Elixir-Native-6e4a7e?style=for-the-badge&logo=elixir&logoColor=white)](https://elixir-lang.org)
 [![OTP](https://img.shields.io/badge/OTP-26+-blue?style=for-the-badge&logo=erlang&logoColor=white)](https://erlang.org)
