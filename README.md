@@ -103,7 +103,7 @@ For local development with graceful multi-service shutdown:
 
 ### Adding Models from models.dev 🆕
 
-While there are several models configured right out of the box from providers like Synthetic, Cerebras, OpenAI, Google, and Anthropic, Code Puppy integrates with [models.dev](https://models.dev) to let you browse and add models from **65+ providers** with a single command:
+While there are several models configured right out of the box from providers like Synthetic, Cerebras, OpenAI, Google, and Anthropic,  integrates with [models.dev](https://models.dev) to let you browse and add models from **65+ providers** with a single command:
 
 ```bash
 /add_model
@@ -125,7 +125,7 @@ The `/add_model` command fetches the latest model data from models.dev in real-t
 
 #### Supported Providers
 
-Code Puppy integrates with https://models.dev giving you access to 65 providers and >1000 different model offerings.
+Integrates with https://models.dev giving you access to 65 providers and >1000 different model offerings.
 
 There are **39+ additional providers** that already have OpenAI-compatible APIs configured in models.dev!
 
@@ -145,11 +145,11 @@ These providers are automatically configured with correct OpenAI-compatible endp
 #### Smart Warnings
 
 - **⚠️ Unsupported Providers** - Providers like Amazon Bedrock and Google Vertex that require special authentication are clearly marked
-- **⚠️ No Tool Calling** - Models without tool calling support show a big warning since they can't use Code Puppy's file/shell tools
+- **⚠️ No Tool Calling** - Models without tool calling support show a big warning since they can't use 's file/shell tools
 
 ### Durable Execution
 
-Code Puppy supports **[DBOS](https://github.com/dbos-inc/dbos-transact-py)** durable execution.
+
 
 When enabled, every agent is automatically wrapped as a `DBOSAgent`, checkpointing key interactions (including agent inputs, LLM responses, MCP calls, and tool calls) in a database for durability and recovery.
 
@@ -163,10 +163,10 @@ Config takes precedence if set; otherwise the environment variable is used.
 ### Configuration
 
 The following environment variables control DBOS behavior:
-- `DBOS_CONDUCTOR_KEY`: If set, Code Puppy connects to the [DBOS Management Console](https://console.dbos.dev/). Make sure you first register an app named `dbos-code-puppy` on the console to generate a Conductor key. Default: `None`.
+- `DBOS_CONDUCTOR_KEY`: If set,  connects to the [DBOS Management Console](https://console.dbos.dev/). Make sure you first register an app named `dbos-code-puppy` on the console to generate a Conductor key. Default: `None`.
 - `DBOS_LOG_LEVEL`: Logging verbosity: `CRITICAL`, `ERROR`, `WARNING`, `INFO`, or `DEBUG`. Default: `ERROR`.
 - `DBOS_SYSTEM_DATABASE_URL`: Database URL used by DBOS. Can point to a local SQLite file or a Postgres instance. Example: `postgresql://postgres:dbos@localhost:5432/postgres`. Default: `dbos_store.sqlite` file in the config directory.
-- `DBOS_APP_VERSION`: If set, Code Puppy uses it as the [DBOS application version](https://docs.dbos.dev/architecture#application-and-workflow-versions) and automatically tries to recover pending workflows for this version. Default: Code Puppy version + Unix timestamp in millisecond (disable automatic recovery).
+- `DBOS_APP_VERSION`: If set,  uses it as the [DBOS application version](https://docs.dbos.dev/architecture#application-and-workflow-versions) and automatically tries to recover pending workflows for this version. Default:  version + Unix timestamp in millisecond (disable automatic recovery).
 
 ### Custom Commands
 Create markdown files in `.claude/commands/`, `.github/prompts/`, or `.agents/commands/` to define custom slash commands. The filename becomes the command name and the content runs as a prompt.
@@ -177,13 +177,13 @@ echo "# Code Review
 
 Please review this code for security issues." > .claude/commands/review.md
 
-# Use it in Code Puppy
+# Use it in 
 /review with focus on authentication
 ```
 
 ## ⚡ Elixir-Native Runtime
 
-Code Puppy runs on an **Elixir-native BEAM/OTP runtime** — no Python is required or invoked by default:
+ runs on an **Elixir-native BEAM/OTP runtime** — no Python is required or invoked by default:
 
 | Capability | Owner | Python needed? |
 |------------|-------|----------------|
@@ -241,7 +241,7 @@ Use the `/mcp` command to manage MCP (list, start, stop, status, etc.)
 
 ### Shell command paths
 
-Code Puppy has **two distinct shell execution paths**:
+ has **two distinct shell execution paths**:
 
 1. **Agent tool path** — `agent_run_shell_command`
    - Used by agents and sub-agents
@@ -255,12 +255,12 @@ Code Puppy has **two distinct shell execution paths**:
    - **Does not use the agent/tool safety pipeline**
    - Should be treated like running the command directly in your terminal
 
-If you want Code Puppy safety and policy checks, use the agent tool path rather than `!<command>`.
+If you want  safety and policy checks, use the agent tool path rather than `!<command>`.
 If you use `!<command>`, you are explicitly choosing direct local execution.
 
 ### Plugin trust boundary
 
-Built-in plugins ship with Code Puppy, but **user plugins are fully trusted local code**.
+Built-in plugins ship with , but **user plugins are fully trusted local code**.
 
 - **Elixir user plugins** in `~/.code_puppy_ex/plugins/` are compiled and
   executed at startup with full system privileges.
@@ -273,7 +273,7 @@ developer tooling.
 
 ### Safe-mode expectations
 
-At the moment, Code Puppy does **not** provide a fully isolated "safe mode" for user plugins.
+At the moment,  does **not** provide a fully isolated "safe mode" for user plugins.
 If you need a more locked-down session, the safest current approach is:
 
 - remove or rename untrusted directories under `~/.code_puppy_ex/plugins/`
@@ -285,7 +285,7 @@ A future hardening direction is an explicit user-plugin disable switch and/or po
 
 ## Round Robin Model Distribution
 
-Code Puppy supports **Round Robin model distribution** to help you overcome rate limits and distribute load across multiple AI models. This feature automatically cycles through configured models with each request, maximizing your API usage while staying within rate limits.
+ supports **Round Robin model distribution** to help you overcome rate limits and distribute load across multiple AI models. This feature automatically cycles through configured models with each request, maximizing your API usage while staying within rate limits.
 
 ### Configuration
 Add a round-robin model configuration to your `~/.code_puppy/extra_models.json` file:
@@ -342,7 +342,7 @@ The `rotate_every` parameter controls how many requests are made to each model b
 
 ## Create your own Agent!!!
 
-Code Puppy features a flexible agent system that allows you to work with specialized AI assistants tailored for different coding tasks. The default runtime is Elixir-native; custom JSON agents are the recommended user-facing extension path.
+ features a flexible agent system that allows you to work with specialized AI assistants tailored for different coding tasks. The default runtime is Elixir-native; custom JSON agents are the recommended user-facing extension path.
 
 ## Quick Start
 
@@ -398,7 +398,7 @@ This is useful for managing context length when you have a long conversation his
 
 ### Built-in Agents
 Elixir-native built-in agents run through `CodePuppyControl` by default:
-- Code Puppy, Code Reviewer, Security Auditor, Python Programmer, Terminal QA,
+- , Code Reviewer, Security Auditor, Python Programmer, Terminal QA,
   Turbo Executor, Code Scout, QA Kitten, Helios, Creator, and Pack sub-agents
 
 ### JSON Agents
@@ -613,7 +613,7 @@ All agents expose the same user-facing interface:
 ### Agent Not Found
 - Ensure JSON file is in correct directory
 - Check JSON syntax is valid
-- Restart Code Puppy or clear agent cache
+- Restart  or clear agent cache
 - Verify filename ends with `-agent.json`
 
 ### Validation Errors
@@ -661,13 +661,13 @@ All agents expose the same user-facing interface:
 
 ---
 
-# Code Puppy Privacy Commitment
+#  Privacy Commitment
 
 **Zero-compromise privacy policy. Always.**
 
 Unlike other Agentic Coding software, there is no corporate or investor backing for this project, which means **zero pressure to compromise our principles for profit**. This isn't just a nice-to-have feature – it's fundamental to the project's DNA.
 
-### What Code Puppy _absolutely does not_ collect:
+### What  _absolutely does not_ collect:
 - ❌ **Zero telemetry** – no usage analytics, crash reports, or behavioral tracking
 - ❌ **Zero prompt logging** – your code, conversations, or project details are never stored
 - ❌ **Zero behavioral profiling** – we don't track what you build, how you code, or when you use the tool
@@ -679,7 +679,7 @@ Unlike other Agentic Coding software, there is no corporate or investor backing 
 - **Direct Developer Contact**: All feature requests, bug reports, and discussions happen directly with me – no middleman analytics platforms or customer data harvesting tools
 
 ### Our privacy-first architecture:
-Code Puppy is designed with privacy-by-design principles. Every feature has been evaluated through a privacy lens, and every integration respects user data sovereignty. When you use Code Puppy, you're not the product – you're just a developer getting things done.
+ is designed with privacy-by-design principles. Every feature has been evaluated through a privacy lens, and every integration respects user data sovereignty. When you use , you're not the product – you're just a developer getting things done.
 
 **This commitment is enforceable because it's structurally impossible to violate it.** No external pressures, no investor demands, no quarterly earnings targets to hit. Just solid code that respects your privacy.
 
