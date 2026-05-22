@@ -17,24 +17,9 @@
 [![Discord](https://img.shields.io/badge/Discord-Community-purple?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/eAGdE4J7Ca)
 [![Docs](https://img.shields.io/badge/Read-The%20Docs-blue?style=for-the-badge&logo=readthedocs)](https://code-puppy.dev)
 
-**[⭐ Star this repo if you hate expensive IDEs! ⭐](#quick-start)**
 
-*"Who needs an IDE when you have 1024 angry puppies?"* - Someone, probably.
 
-</div>
 
-```
-    ███████╗ █████╗ ███████╗████████╗    ██████╗ ██╗   ██╗██████╗ ██████╗ ██╗   ██╗
-    ██╔════╝██╔══██╗██╔════╝╚══██╔══╝    ██╔══██╗██║   ██║██╔══██╗██╔══██╗╚██╗ ██╔╝
-    █████╗  ███████║███████╗   ██║       ██████╔╝██║   ██║██████╔╝██████╔╝ ╚████╔╝ 
-    ██╔══╝  ██╔══██║╚════██║   ██║       ██╔═══╝ ██║   ██║██╔═══╝ ██╔═══╝   ╚██╔╝  
-    ██║     ██║  ██║███████║   ██║       ██║     ╚██████╔╝██║     ██║        ██║   
-    ╚═╝     ╚═╝  ╚═╝╚══════╝   ╚═╝       ╚═╝      ╚═════╝ ╚═╝     ╚═╝        ╚═╝   
-```
-
-**🚀 Elixir-native runtime — zero Python required! 🚀**
-
----
 
 
 
