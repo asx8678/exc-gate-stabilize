@@ -16,27 +16,6 @@
 [![Docs](https://img.shields.io/badge/Read-The%20Docs-blue?style=for-the-badge&logo=readthedocs)](https://code-puppy.dev)
 
 
-
-
-
-
-
-## Overview
-
-*This project was coded angrily in reaction to Windsurf and Cursor removing access to models and raising prices.*
-
-*You could also run 50 code puppies at once if you were insane enough.*
-
-*Would you rather plow a field with one ox or 1024 puppies?*
-    - If you pick the ox, better slam that back button in your browser.
-
-
-Code Puppy is an AI-powered code generation agent, designed to understand programming tasks, generate high-quality code, and explain its reasoning similar to tools like Windsurf and Cursor.
-
-## Fork Enhancements
-
-This fork adds significant capabilities to the original code_puppy, transforming it from a coding assistant into an enterprise-grade multi-agent development platform.
-
 | Feature | Description | Speedup/Impact |
 |---------|-------------|----------------|
 | ⚡ Native Runtime | Elixir-native BEAM/OTP runtime — no Python needed | 10-50x faster |
